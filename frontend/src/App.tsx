@@ -24,6 +24,7 @@ import {
 
 const API = "https://careerpilot-ai-g2cq.vercel.app";
 
+
 type Message = {
   role: "assistant" | "user";
   text: string;
