@@ -1,11 +1,15 @@
 
 import sqlite3
 from pathlib import Path
-
+import os
 # from streamlit import status
 
 
-DB_PATH = Path(__file__).resolve().parents[2] / "careerpilot.db"
+# DB_PATH = Path(__file__).resolve().parents[2] / "careerpilot.db"
+DB_PATH = Path(
+    os.getenv("DB_PATH", "/tmp/careerpilot.db")
+)
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _validate_identifier(value: str, field_name: str) -> str:
