@@ -11,3 +11,4 @@ dist/
 .vscode/backend/data/jobs.backup.json
 .vscode/
 backend/data/jobs.backup.json
+*.tsbuildinfo
