@@ -22,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 
-const API = "https://careerpilot-ai-g2cq-8zdrowui7-avid18s-projects.vercel.app";
+const API = "https://careerpilot-ai-g2cq.vercel.app";
 
 type Message = {
   role: "assistant" | "user";
