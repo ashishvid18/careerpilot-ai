@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+*.db
+node_modules/
+dist/
+*.log
+.vscode/backend/data/jobs.backup.json
+.vscode/
+backend/data/jobs.backup.json
