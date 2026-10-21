@@ -64,11 +64,26 @@ def health():
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
+    import logging
+    import time
+
+    logger = logging.getLogger(__name__)
+
+    started = time.monotonic()
+    logger.info("Starting Gemini request")
+
+    # Keep your existing Gemini API call here.
+
+    
     try:
         reply = reply_to_message(
             message=request.message,
             resume_profile=request.resume_profile,
         )
+        logger.info(
+                "Gemini request finished in %.2f seconds",
+                time.monotonic() - started,
+            )
         return ChatResponse(reply=reply)
 
     except RuntimeError as exc:
@@ -88,8 +103,12 @@ def chat(request: ChatRequest):
         )
 
 
+
 @app.post("/api/resume/parse")
 async def parse_resume(file: UploadFile = File(...)):
+    import time
+
+    started = time.monotonic()
     filename = file.filename or "resume"
 
     if Path(filename).suffix.lower() not in {".pdf", ".docx"}:
@@ -107,7 +126,15 @@ async def parse_resume(file: UploadFile = File(...)):
         )
 
     try:
+        stage = time.monotonic()
+        logger.info("Resume extraction started: %s", filename)
+
         text = extract_resume_text(filename, content)
+
+        logger.info(
+            "Resume extraction finished in %.2fs",
+            time.monotonic() - stage,
+        )
 
         if not text.strip():
             raise HTTPException(
@@ -115,7 +142,22 @@ async def parse_resume(file: UploadFile = File(...)):
                 detail="No readable text was found in the resume.",
             )
 
+        stage = time.monotonic()
+        logger.info(
+            "Gemini resume parsing started; text length=%d",
+            len(text),
+        )
+
         profile = parse_resume_with_gemini(text)
+
+        logger.info(
+            "Gemini resume parsing finished in %.2fs",
+            time.monotonic() - stage,
+        )
+        logger.info(
+            "Resume request completed in %.2fs",
+            time.monotonic() - started,
+        )
 
         return {
             "profile": profile.model_dump(),
@@ -124,19 +166,16 @@ async def parse_resume(file: UploadFile = File(...)):
 
     except HTTPException:
         raise
-
     except ValueError as exc:
         raise HTTPException(
             status_code=422,
             detail=str(exc),
         ) from exc
-
     except RuntimeError as exc:
         raise HTTPException(
             status_code=503,
             detail=str(exc),
         ) from exc
-
     except Exception:
         logger.exception("Resume parsing failed")
         raise HTTPException(

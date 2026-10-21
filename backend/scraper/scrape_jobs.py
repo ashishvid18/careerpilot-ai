@@ -135,7 +135,7 @@ def get_config():
         )
 
     results_wanted = env_int("JOBSPY_RESULTS_PER_SITE", 100)
-    target = env_int("JOB_TARGET_COUNT", 1800)
+    target = env_int("JOB_TARGET_COUNT", 500)
     hours_old = env_int("JOBSPY_HOURS_OLD", 720)
 
     if results_wanted < 1:

@@ -7,7 +7,7 @@ def extract_resume_text(filename: str, content: bytes) -> str:
     suffix = Path(filename).suffix.lower()
     if suffix == ".pdf":
         with fitz.open(stream=content, filetype="pdf") as pdf:
-            text = "\n".join(page.get_text("text") for page in pdf)
+            text = "\n".join(str(page.get_text("text")) for page in pdf)
     elif suffix == ".docx":
         doc = Document(io.BytesIO(content))
         parts = [p.text for p in doc.paragraphs if p.text.strip()]
