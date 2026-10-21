@@ -1,41 +1,85 @@
 
 import json
+import logging
 import re
+import time
 
 from google import genai
 
 from app.config import settings
 from app.models import ResumeProfile
 
+logger = logging.getLogger("careerpilot.gemini")
+
+REQUEST_TIMEOUT_MS = 30_000
+
 
 def _client():
-    """Create a Gemini client using the configured API key."""
+    """Create a Gemini client with bounded request time and retries."""
     if not settings.gemini_api_key:
         raise RuntimeError(
-            "Gemini API key is missing. "
-            "Add GEMINI_API_KEY to backend/.env."
+            "Gemini API key is missing. Configure GEMINI_API_KEY "
+            "in the backend environment variables."
         )
 
-    return genai.Client(api_key=settings.gemini_api_key)
+    return genai.Client(
+        api_key=settings.gemini_api_key,
+        http_options={
+            "timeout": REQUEST_TIMEOUT_MS,
+            "retry_options": {
+                "attempts": 1,
+            },
+        },
+    )
 
 
 def _generate_text(prompt: str) -> str:
-    """Generate text using the Gemini Interactions API."""
+    """Generate text using Gemini with a bounded request timeout."""
     client = _client()
+    started = time.monotonic()
 
-    interaction = client.interactions.create(
-        model=settings.gemini_model,
-        input=prompt,
+    logger.info(
+        "Gemini request started; model=%s, prompt_chars=%d",
+        settings.gemini_model,
+        len(prompt),
     )
 
-    output = getattr(interaction, "output_text", None)
-
-    if not isinstance(output, str) or not output.strip():
-        raise RuntimeError(
-            "Gemini returned an empty response. Please try again."
+    try:
+        interaction = client.interactions.create(
+            model=settings.gemini_model,
+            input=prompt,
         )
 
-    return output.strip()
+        output = getattr(interaction, "output_text", None)
+
+        if not isinstance(output, str) or not output.strip():
+            raise RuntimeError(
+                "Gemini returned an empty response. Please try again."
+            )
+
+        logger.info(
+            "Gemini request completed in %.2f seconds",
+            time.monotonic() - started,
+        )
+
+        return output.strip()
+
+    except RuntimeError:
+        raise
+
+    except Exception as exc:
+        elapsed = time.monotonic() - started
+        logger.exception(
+            "Gemini request failed after %.2f seconds",
+            elapsed,
+        )
+        raise RuntimeError(
+            "Gemini could not complete the request. "
+            "Please retry shortly."
+        ) from exc
+
+    finally:
+        client.close()
 
 
 def parse_resume_with_gemini(resume_text: str) -> ResumeProfile:
@@ -81,13 +125,11 @@ RESUME TEXT:
         ) from exc
 
 
-
 def reply_to_message(
     message: str,
     resume_profile: ResumeProfile | None = None,
 ) -> str:
     """Generate a conversational reply using Gemini and an optional resume."""
-
     if resume_profile is not None:
         profile_context = resume_profile.model_dump_json(indent=2)
     else:
