@@ -22,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 
-const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const API = "https://careerpilot-ai-g2cq-8zdrowui7-avid18s-projects.vercel.app";
 
 type Message = {
   role: "assistant" | "user";
