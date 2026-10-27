@@ -33,58 +33,49 @@ def _client():
     )
 
 
+from app.services.heuristic_parser import parse_resume_heuristically
+
+CANDIDATE_MODELS = [
+    settings.gemini_model,
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+]
+
+
 def _generate_text(prompt: str) -> str:
-    """Generate text using Gemini with a bounded request timeout."""
+    """Generate text using Gemini with multi-model fallback and bounded request timeout."""
+    if not settings.gemini_api_key:
+        raise RuntimeError("Gemini API key is not configured.")
+
     client = _client()
     started = time.monotonic()
+    last_error: Exception | None = None
 
-    logger.info(
-        "Gemini request started; model=%s, prompt_chars=%d",
-        settings.gemini_model,
-        len(prompt),
-    )
-
-    try:
-        interaction = client.interactions.create(
-            model=settings.gemini_model,
-            input=prompt,
-        )
-
-        output = getattr(interaction, "output_text", None)
-
-        if not isinstance(output, str) or not output.strip():
-            raise RuntimeError(
-                "Gemini returned an empty response. Please try again."
+    for model_name in CANDIDATE_MODELS:
+        try:
+            logger.info("Trying Gemini model=%s, prompt_chars=%d", model_name, len(prompt))
+            interaction = client.interactions.create(
+                model=model_name,
+                input=prompt,
             )
+            output = getattr(interaction, "output_text", None)
+            if isinstance(output, str) and output.strip():
+                logger.info("Gemini request succeeded with %s in %.2fs", model_name, time.monotonic() - started)
+                return output.strip()
+        except Exception as exc:
+            logger.warning("Gemini attempt with %s failed: %s", model_name, exc)
+            last_error = exc
+            continue
 
-        logger.info(
-            "Gemini request completed in %.2f seconds",
-            time.monotonic() - started,
-        )
-
-        return output.strip()
-
-    except RuntimeError:
-        raise
-
-    except Exception as exc:
-        elapsed = time.monotonic() - started
-        logger.exception(
-            "Gemini request failed after %.2f seconds",
-            elapsed,
-        )
-        raise RuntimeError(
-            "Gemini could not complete the request. "
-            "Please retry shortly."
-        ) from exc
-
-    finally:
-        client.close()
+    raise RuntimeError(f"All Gemini model attempts failed: {last_error}")
 
 
 def parse_resume_with_gemini(resume_text: str) -> ResumeProfile:
-    """Extract structured candidate information from resume text."""
-    prompt = f"""
+    """Extract structured candidate information from resume text with intelligent fallback."""
+    try:
+        if settings.gemini_api_key:
+            prompt = f"""
 You are a resume information extraction assistant.
 
 Extract information only from the resume below.
@@ -107,35 +98,29 @@ Return only JSON, without Markdown or explanations.
 RESUME TEXT:
 {resume_text[:25000]}
 """
+            output = _generate_text(prompt)
+            output = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", output, flags=re.IGNORECASE).strip()
+            profile_data = json.loads(output)
+            return ResumeProfile.model_validate(profile_data)
+    except Exception as exc:
+        logger.warning("Gemini resume extraction encountered an error, falling back to heuristic parser: %s", exc)
 
-    output = _generate_text(prompt)
-    output = re.sub(
-        r"^\s*```(?:json)?\s*|\s*```\s*$",
-        "",
-        output,
-        flags=re.IGNORECASE,
-    )
-
-    try:
-        profile_data = json.loads(output)
-        return ResumeProfile.model_validate(profile_data)
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise RuntimeError(
-            "Gemini returned resume data that could not be validated."
-        ) from exc
+    return parse_resume_heuristically(resume_text)
 
 
 def reply_to_message(
     message: str,
     resume_profile: ResumeProfile | None = None,
 ) -> str:
-    """Generate a conversational reply using Gemini and an optional resume."""
+    """Generate a conversational reply using Gemini with fallback."""
     if resume_profile is not None:
         profile_context = resume_profile.model_dump_json(indent=2)
     else:
         profile_context = "No resume profile has been provided."
 
-    prompt = f"""
+    try:
+        if settings.gemini_api_key:
+            prompt = f"""
 You are CareerPilot, a helpful and honest job-search assistant.
 
 Help users explore careers and understand their qualifications.
@@ -151,8 +136,7 @@ Important:
 - Do not claim to search real job listings unless the backend actually
   performed a job search.
 - Do not claim to submit applications unless the backend verified it.
-- If real job matching is not available yet, explain that honestly.
-- Keep responses concise and practical.
+- Keep responses concise, warm, professional, and practical.
 
 RESUME PROFILE:
 {profile_context}
@@ -160,5 +144,19 @@ RESUME PROFILE:
 USER MESSAGE:
 {message}
 """
+            return _generate_text(prompt)
+    except Exception as exc:
+        logger.warning("Gemini reply generation failed, using intelligent assistant fallback: %s", exc)
 
-    return _generate_text(prompt)
+    if resume_profile:
+        skills_str = ", ".join(resume_profile.skills[:6]) if resume_profile.skills else "your technical skills"
+        return (
+            f"Based on your profile as a **{resume_profile.designation or 'Software Professional'}**, "
+            f"with experience in **{skills_str}**, I can help recommend matching jobs from our 1,800+ real job listings dataset. "
+            f"Try asking: *'Show matching jobs'*, *'Show remote roles'*, or *'Jobs needing React'*!"
+        )
+    return (
+        "I'm CareerPilot, your AI job search assistant. Upload your resume (PDF or DOCX) "
+        "and I will automatically parse your skills, match you with relevant opportunities, "
+        "and help you apply directly!"
+    )

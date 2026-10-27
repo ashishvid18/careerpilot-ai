@@ -1,17 +1,25 @@
 
 import logging
+import os
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from app.config import settings
-from app.models import ChatRequest, ChatResponse, ResumeProfile
-from app.services.resume_parser import extract_resume_text
-from app.services.gemini_service import (
-    parse_resume_with_gemini,
-    reply_to_message,
+from app.models import (
+    ApplicationItem,
+    ApplicationStatusRequest,
+    ApplyRequest,
+    ChatRequest,
+    ChatResponse,
+    ResumeProfile,
 )
+from app.agents.orchestrator import OrchestratorAgent
+from app.agents.resume_agent import ResumeAgent
 from app.jooble_service import search_jobs
 from app.database.store import (
     initialize_database,
@@ -21,37 +29,32 @@ from app.database.store import (
 )
 from app.services.job_matcher import match_jobs
 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("careerpilot")
 
 app = FastAPI(
     title="CareerPilot AI API",
-    version="0.2.0",
+    version="0.3.0",
+    description="Conversational AI Job Assistant API with Agent Orchestration",
 )
 
+# Allow CORS for development and deployment
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.frontend_origin,
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-        "http://localhost:5176",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-        "http://127.0.0.1:5175",
-        "http://127.0.0.1:5176",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+orchestrator = OrchestratorAgent()
+resume_agent = ResumeAgent()
+
 
 @app.on_event("startup")
 def startup():
     initialize_database()
+    logger.info("Database initialized successfully.")
 
 
 @app.get("/api/health")
@@ -59,131 +62,54 @@ def health():
     return {
         "status": "ok",
         "service": "careerpilot-api",
+        "version": "0.3.0",
+        "agent": "OrchestratorAgent ready",
     }
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    import logging
-    import time
-
-    logger = logging.getLogger(__name__)
-
+    """
+    Orchestrator chat endpoint. Routes user messages to specialized agents:
+    - ResumeAgent
+    - JobAgent (matching, filtering, recommendations)
+    - ApplicationAgent (apply, deduplicate, status)
+    """
     started = time.monotonic()
-    logger.info("Starting Gemini request")
-
-    # Keep your existing Gemini API call here.
-
-    
+    logger.info("Chat request received: %s (session: %s)", request.message[:60], request.session_id)
     try:
-        reply = reply_to_message(
-            message=request.message,
-            resume_profile=request.resume_profile,
-        )
-        logger.info(
-                "Gemini request finished in %.2f seconds",
-                time.monotonic() - started,
-            )
-        return ChatResponse(reply=reply)
-
-    except RuntimeError as exc:
+        response = orchestrator.handle_message(request)
+        logger.info("Chat processed by Orchestrator in %.2fs (intent=%s)", time.monotonic() - started, response.intent)
+        return response
+    except Exception as exc:
+        logger.exception("Orchestrator chat handling failed")
         raise HTTPException(
-            status_code=503,
-            detail=str(exc),
-        ) from exc
-
-    except Exception:
-        logger.exception("Chat failed")
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "Gemini request failed. Check API configuration "
-                "and try again."
-            ),
+            status_code=500,
+            detail=f"An error occurred while processing your message: {exc}",
         )
-
 
 
 @app.post("/api/resume/parse")
 async def parse_resume(file: UploadFile = File(...)):
-    import time
-
+    """Upload and parse a PDF or DOCX resume using ResumeAgent with heuristic fallback."""
     started = time.monotonic()
     filename = file.filename or "resume"
-
-    if Path(filename).suffix.lower() not in {".pdf", ".docx"}:
-        raise HTTPException(
-            status_code=400,
-            detail="Please upload a PDF or DOCX file.",
-        )
-
     content = await file.read()
 
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(
-            status_code=413,
-            detail="Resume must be smaller than 10 MB.",
-        )
-
     try:
-        stage = time.monotonic()
-        logger.info("Resume extraction started: %s", filename)
-
-        text = extract_resume_text(filename, content)
-
-        logger.info(
-            "Resume extraction finished in %.2fs",
-            time.monotonic() - stage,
-        )
-
-        if not text.strip():
-            raise HTTPException(
-                status_code=422,
-                detail="No readable text was found in the resume.",
-            )
-
-        stage = time.monotonic()
-        logger.info(
-            "Gemini resume parsing started; text length=%d",
-            len(text),
-        )
-
-        profile = parse_resume_with_gemini(text)
-
-        logger.info(
-            "Gemini resume parsing finished in %.2fs",
-            time.monotonic() - stage,
-        )
-        logger.info(
-            "Resume request completed in %.2fs",
-            time.monotonic() - started,
-        )
-
+        profile, char_count = resume_agent.parse_from_bytes(filename, content)
+        logger.info("Resume parsed in %.2fs (chars=%d)", time.monotonic() - started, char_count)
         return {
             "profile": profile.model_dump(),
-            "text_characters": len(text),
+            "text_characters": char_count,
         }
-
-    except HTTPException:
-        raise
     except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Resume parsing failed unexpectedly")
         raise HTTPException(
-            status_code=422,
-            detail=str(exc),
-        ) from exc
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=str(exc),
-        ) from exc
-    except Exception:
-        logger.exception("Resume parsing failed")
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "Resume parsing failed. Check Gemini configuration "
-                "and try again."
-            ),
+            status_code=500,
+            detail=f"Resume parsing failed: {exc}",
         )
 
 
@@ -194,16 +120,9 @@ def jobs_search(
     page: int = Query(default=1, ge=1),
 ):
     if not keywords.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Keywords are required.",
-        )
-
+        raise HTTPException(status_code=400, detail="Keywords are required.")
     if not location.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Location is required.",
-        )
+        raise HTTPException(status_code=400, detail="Location is required.")
 
     try:
         return search_jobs(
@@ -211,20 +130,9 @@ def jobs_search(
             location=location.strip(),
             page=page,
         )
-
-    except RuntimeError as exc:
+    except Exception as exc:
         logger.exception("Job search failed")
-        raise HTTPException(
-            status_code=502,
-            detail=str(exc),
-        ) from exc
-
-    except Exception:
-        logger.exception("Job search failed")
-        raise HTTPException(
-            status_code=502,
-            detail="Job search failed. Check the backend logs.",
-        )
+        raise HTTPException(status_code=502, detail=f"Job search failed: {exc}")
 
 
 @app.post("/api/jobs/match")
@@ -235,131 +143,97 @@ def jobs_match(
     remote_only: bool = False,
     limit: int = Query(default=10, ge=1, le=50),
 ):
-    if keywords and not keywords.strip():
-        keywords = ""
-
-    if location and not location.strip():
-        location = ""
-
     try:
         return match_jobs(
             profile=profile,
             limit=limit,
-            keywords=keywords.strip(),
-            location=location.strip(),
+            keywords=keywords.strip() if keywords else "",
+            location=location.strip() if location else "",
             remote_only=remote_only,
         )
-
-    except RuntimeError as exc:
-        logger.exception("Job matching failed")
-        raise HTTPException(
-            status_code=500,
-            detail="Job matching failed. Check the backend logs.",
-        ) from exc
-
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        ) from exc
-
-    except Exception:
-        logger.exception("Unexpected job matching failure")
-        raise HTTPException(
-            status_code=500,
-            detail="An unexpected error occurred during job matching.",
-        )
-
-    
-from pydantic import BaseModel
-
-
-class ApplyRequest(BaseModel):
-    session_id: str = "local-session"
-    job_id: str
-
-
-class ApplicationStatusRequest(BaseModel):
-    session_id: str = "local-session"
-    job_id: str
-    status: str
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Job matching failed")
+        raise HTTPException(status_code=500, detail=f"Job matching failed: {exc}")
 
 
 @app.post("/api/applications")
 def create_application(request: ApplyRequest):
+    """Save an application record, preventing duplicate entries."""
     try:
-        # Verify that the requested job exists in the local dataset.
-        from app.jooble_service import load_jobs
+        from app.agents.application_agent import _load_job_lookup
+        lookup = _load_job_lookup()
 
-        jobs = load_jobs()
-        valid_ids = {
-            str(job.get("job_id", ""))
-            for job in jobs
-        }
-
-        if request.job_id not in valid_ids:
+        if request.job_id not in lookup:
             raise HTTPException(
                 status_code=404,
-                detail="Job ID was not found in the job dataset.",
+                detail=f"Job ID '{request.job_id}' was not found in the job dataset.",
             )
 
-        application = save_application(
+        job_meta = lookup[request.job_id]
+        result = orchestrator.application_agent.apply(
             session_id=request.session_id,
-            job_id=request.job_id,
-            status="saved_demo",
+            job_data=job_meta,
+            status=request.status or "submitted",
         )
-
-        return {
-            "message": (
-                "Application record saved."
-                if application["created"]
-                else "This job is already saved in your applications."
-            ),
-            "application": application,
-        }
-
+        return result
     except HTTPException:
         raise
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Create application failed")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/api/applications")
 def get_applications(session_id: str = "local-session"):
+    """Retrieve all applications for a session enriched with job details."""
     try:
-        applications = list_applications(session_id)
+        apps = orchestrator.application_agent.list_applications_enriched(session_id)
         return {
-            "total": len(applications),
-            "applications": applications,
+            "total": len(apps),
+            "applications": apps,
         }
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.patch("/api/applications/status")
 def change_application_status(request: ApplicationStatusRequest):
+    """Update application status."""
     try:
         application = update_application_status(
             session_id=request.session_id,
             job_id=request.job_id,
             status=request.status,
         )
-
         if application is None:
             raise HTTPException(
                 status_code=404,
                 detail="Application record was not found.",
             )
-
         return {
             "message": "Application status updated.",
             "application": application,
         }
-
     except HTTPException:
         raise
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# Mount compiled frontend static build if present
+frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if frontend_dist.exists() and (frontend_dist / "index.html").exists():
+    logger.info("Serving compiled frontend from: %s", frontend_dist)
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")
+
+    @app.exception_handler(404)
+    async def not_found_handler(request, exc):
+        # Route non-API 404s back to index.html for SPA client-side routing
+        if not request.url.path.startswith("/api"):
+            return FileResponse(frontend_dist / "index.html")
+        raise HTTPException(status_code=404, detail="Not Found")
 

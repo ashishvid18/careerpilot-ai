@@ -5,11 +5,23 @@ import os
 # from streamlit import status
 
 
-# DB_PATH = Path(__file__).resolve().parents[2] / "careerpilot.db"
-DB_PATH = Path(
-    os.getenv("DB_PATH", "/tmp/careerpilot.db")
-)
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+def _get_db_path() -> Path:
+    env_db = os.getenv("DB_PATH")
+    if env_db:
+        p = Path(env_db)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+    local_p = Path(__file__).resolve().parents[2] / "data" / "careerpilot.db"
+    try:
+        local_p.parent.mkdir(parents=True, exist_ok=True)
+        return local_p
+    except (OSError, PermissionError):
+        tmp_p = Path("/tmp/careerpilot.db")
+        tmp_p.parent.mkdir(parents=True, exist_ok=True)
+        return tmp_p
+
+
+DB_PATH = _get_db_path()
 
 
 def _validate_identifier(value: str, field_name: str) -> str:
@@ -55,9 +67,9 @@ def save_application(
     status: str = "saved_demo",
 ) -> dict:
     """Save an application record without creating duplicates."""
+    initialize_database()
     session_id = _validate_identifier(session_id, "Session ID")
     job_id = _validate_identifier(job_id, "Job ID")
-
 
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -94,8 +106,8 @@ def save_application(
 
 def list_applications(session_id: str) -> list[dict]:
     """Return saved applications for one session."""
+    initialize_database()
     session_id = _validate_identifier(session_id, "Session ID")
-
 
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -120,6 +132,7 @@ def update_application_status(
     status: str,
 ) -> dict | None:
     """Update the status of an existing application record."""
+    initialize_database()
     session_id = _validate_identifier(session_id, "Session ID")
     job_id = _validate_identifier(job_id, "Job ID")
 

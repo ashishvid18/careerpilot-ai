@@ -102,3 +102,174 @@
   border-radius: 4px;
   background: #f1f3ee;
 }
+
+.action-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.action-chip {
+  border: 1px solid #c9d8cb;
+  background: #f2f7f1;
+  color: #275239;
+  border-radius: 16px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.action-chip:hover {
+  background: #e3ede1;
+  border-color: #a4c2a7;
+  transform: translateY(-1px);
+}
+
+.action-chip:active {
+  transform: translateY(0);
+}
+
+.matched-jobs-panel {
+  margin: 14px 0;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #dfe5da;
+  border-radius: 8px;
+}
+
+.matched-jobs-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.matched-jobs-heading h2 {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.matched-job-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid #f0f2eb;
+}
+
+.matched-job-card:last-of-type {
+  border-bottom: none;
+}
+
+.matched-job-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+
+.matched-job-copy strong {
+  font-size: 12px;
+  color: #262b25;
+}
+
+.matched-job-copy span {
+  font-size: 11px;
+  color: #636b60;
+}
+
+.matched-job-copy small {
+  font-size: 10px;
+  color: #2e6044;
+  font-weight: 600;
+}
+
+.tracker-view {
+  padding: 24px 0;
+}
+
+.tracker-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #636b60;
+}
+
+.application-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.application-card {
+  background: #fff;
+  border: 1px solid #dfe5da;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.application-card-heading {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.application-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.application-card-title strong {
+  font-size: 13px;
+}
+
+.application-card-title span {
+  font-size: 11px;
+  color: #727a6e;
+}
+
+.application-location {
+  margin: 0;
+  font-size: 11px;
+  color: #636b60;
+}
+
+.application-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.status-control select {
+  margin-left: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid #d1d8cc;
+  background: #fbfcf9;
+  font-size: 11px;
+  color: #2c4e3a;
+  font-weight: 600;
+}
+
+.application-date {
+  color: #92998e;
+  font-size: 10px;
+}
+
